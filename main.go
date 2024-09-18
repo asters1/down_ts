@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -132,22 +133,29 @@ func getTslist(URL string, NAME string) []string {
 			}
 			if strings.TrimSpace(m_list[i])[:1] == "#" {
 				if strings.Contains(m_list[i], "METHOD=AES") {
-					p := m_list[i][:strings.Index(m_list[i], "URI")] + "URI=\""
-					s := "\""
-					key_url := strings.Trim(m_list[i][strings.Index(m_list[i], "URI"):][4:], "\"")
+					re_other_pattern := `AES-128,URI="(.*?)"`
+					re_key_pattern := `AES-128,URI="([^"]+)"`
+
+					re_other := regexp.MustCompile(re_other_pattern)
+					re_key := regexp.MustCompile(re_key_pattern)
+					key_name := tools.GetUUID() + ".key"
+					m3u8_str = m3u8_str + re_other.ReplaceAllString(m_list[i], `AES-128,URI="`+key_name+`"`) + "\n"
+
+					key_url := re_key.FindStringSubmatch(m_list[i])[1]
+					fmt.Println(key_url)
+					// os.Exit(1)
 					key_url = paseM3u8Url(key_url)
-					key_name := NAME + "/" + tools.GetUUID() + ".key"
 					// fmt.Println(p + key_name + s)
-					m3u8_str = m3u8_str + p + key_name + s + "\n"
+					// m3u8_str = m3u8_str + p + key_name + s + "\n"
 					res := tools.RequestClient(key_url, "get", "", "")
-					W(res, key_name)
+					W(res, NAME+"/"+key_name)
 
 				} else {
 					m3u8_str = m3u8_str + m_list[i] + "\n"
 				}
 
 			} else {
-				m3u8_str = m3u8_str + NAME + "/" + j_str + ".ts" + "\n"
+				m3u8_str = m3u8_str + j_str + ".ts" + "\n"
 				result = append(result, paseM3u8Url(m_list[i]))
 				j++
 			}
@@ -186,6 +194,7 @@ func main() {
 	IsExists(OUTPUT)
 	// getTslist(URL, OUTPUT)
 	ts_list := getTslist(URL, OUTPUT)
+	// fmt.Println(ts_list)
 	ts_pool(ts_list)
 	// fmt.Println(a)
 	// fmt.Println(len(b))
