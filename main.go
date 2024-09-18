@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/asters1/tools"
 )
@@ -13,13 +14,28 @@ import (
 var (
 	URL_HOST string
 	URL_PATH string
+	OUTPUT   string
+	wg       sync.WaitGroup
+	wg_NUM   int
+	wg_m     sync.Mutex //互斥锁
+	ch_str   chan string
 )
+
+func W(str string, path string) {
+	wg_m.Lock()
+	err := os.WriteFile(path, []byte(str), 0666)
+	if err != nil {
+		fmt.Println("写入失败-->", err)
+		return
+	}
+	wg_m.Unlock()
+}
 
 func Init() (string, string) {
 	Ustr_isExist := false
 	Ostr_isExist := false
 	URL := ""
-	OUTPUT := ""
+	OUTPUT = ""
 	cmd_list := os.Args
 
 	for i := 0; i < len(cmd_list); i++ {
@@ -86,7 +102,7 @@ func paseM3u8Url(path string) string {
 	return result
 
 }
-func getTslist(URL string, NAME string) (string, []string) {
+func getTslist(URL string, NAME string) []string {
 	m3u8_str := ""
 	result := []string{}
 	for {
@@ -115,7 +131,20 @@ func getTslist(URL string, NAME string) (string, []string) {
 				os.Exit(1)
 			}
 			if strings.TrimSpace(m_list[i])[:1] == "#" {
-				m3u8_str = m3u8_str + m_list[i] + "\n"
+				if strings.Contains(m_list[i], "METHOD=AES") {
+					p := m_list[i][:strings.Index(m_list[i], "URI")] + "URI=\""
+					s := "\""
+					key_url := strings.Trim(m_list[i][strings.Index(m_list[i], "URI"):][4:], "\"")
+					key_url = paseM3u8Url(key_url)
+					key_name := NAME + "/" + tools.GetUUID() + ".key"
+					// fmt.Println(p + key_name + s)
+					m3u8_str = m3u8_str + p + key_name + s + "\n"
+					res := tools.RequestClient(key_url, "get", "", "")
+					W(res, key_name)
+
+				} else {
+					m3u8_str = m3u8_str + m_list[i] + "\n"
+				}
 
 			} else {
 				m3u8_str = m3u8_str + NAME + "/" + j_str + ".ts" + "\n"
@@ -129,14 +158,36 @@ func getTslist(URL string, NAME string) (string, []string) {
 AA:
 
 	// fmt.Println("########")
-	return m3u8_str, result
+	W(m3u8_str, NAME+"/index.m3u8")
+	return result
+}
+func down_ts(url string, path string) {
+	fmt.Println("正在下载-->" + path)
+	ts_str := tools.RequestClient(url, "get", "", "")
+	W(ts_str, path)
+	<-ch_str
+	wg.Done()
+
+}
+func ts_pool(ts_list []string) {
+	ch_str = make(chan string, wg_NUM)
+	for i := 0; i < len(ts_list); i++ {
+		wg.Add(1)
+		ch_str <- ts_list[i]
+		go down_ts(ts_list[i], OUTPUT+"/"+strconv.Itoa(i)+".ts")
+
+	}
+
 }
 
 func main() {
+	wg_NUM = 6
 	URL, OUTPUT := Init()
 	IsExists(OUTPUT)
-	a, b := getTslist(URL, OUTPUT)
-	fmt.Println(a)
-	fmt.Println(len(b))
+	// getTslist(URL, OUTPUT)
+	ts_list := getTslist(URL, OUTPUT)
+	ts_pool(ts_list)
+	// fmt.Println(a)
+	// fmt.Println(len(b))
 
 }
